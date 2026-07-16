@@ -5041,7 +5041,8 @@ var removeUnusedDefElems = this.removeUnusedDefElems = function() {
   
   var defelem_uses = [],
     numRemoved = 0;
-  var attrs = ['fill', 'stroke', 'filter', 'marker-start', 'marker-mid', 'marker-end'];
+  // Include clip-path/mask; also scan style= for url(#id) below.
+  var attrs = ['fill', 'stroke', 'filter', 'marker-start', 'marker-mid', 'marker-end', 'clip-path', 'mask'];
   var alen = attrs.length;
   
   var all_els = svgcontent.getElementsByTagNameNS(svgns, '*');
@@ -5057,6 +5058,18 @@ var removeUnusedDefElems = this.removeUnusedDefElems = function() {
         }
       }
     }
+
+    // url(#id) buried in style="" still counts as a use (Method Draw sometimes leaves these)
+    var styleVal = el.getAttribute('style');
+    if (styleVal && styleVal.indexOf('url(') !== -1) {
+      var styleRefs = styleVal.match(/url\(\s*['"]?#([^'")\s]+)/g);
+      if (styleRefs) {
+        for (var sr = 0; sr < styleRefs.length; sr++) {
+          var sid = styleRefs[sr].replace(/^url\(\s*['"]?#/, '').replace(/['"]?\s*\)$/, '');
+          if (sid) defelem_uses.push(sid);
+        }
+      }
+    }
     
     // gradients can refer to other gradients
     var href = getHref(el);
@@ -5066,11 +5079,13 @@ var removeUnusedDefElems = this.removeUnusedDefElems = function() {
   };
   
   var defelems = $(defs).find("linearGradient, radialGradient, filter, marker, svg, symbol");
-    defelem_ids = [],
-    i = defelems.length;
+  var i = defelems.length;
   while (i--) {
     var defelem = defelems[i];
+    if (!defelem || !defelem.parentNode) continue;
     var id = defelem.id;
+    // Never treat anonymous defs as removable — empty ids collide and can loop.
+    if (!id) continue;
     if(defelem_uses.indexOf(id) < 0) {
       // Not found, so remove (but remember)
       removedElements[id] = defelem;
@@ -5088,8 +5103,12 @@ var removeUnusedDefElems = this.removeUnusedDefElems = function() {
 // Returns: 
 // String containing the SVG image for output
 this.svgCanvasToString = function() {
-  // keep calling it until there are none to remove
-  while (removeUnusedDefElems() > 0) {};
+  // Upstream Method Draw loops forever here on some marker-heavy diagrams
+  // (esp. after moving text). Cap iterations — nested unused defs settle in 1–2 passes.
+  var defCleanupGuard = 0;
+  while (removeUnusedDefElems() > 0 && defCleanupGuard < 8) {
+    defCleanupGuard++;
+  }
   
   pathActions.clear(true);
   
@@ -5219,7 +5238,14 @@ this.svgToString = function(elem, indent) {
           if(attrVal.indexOf('pointer-events') === 0) continue;
           if(attr.localName === "class" && attrVal.indexOf('se_') === 0) continue;
           out.push(" "); 
-          if(attr.localName === 'd') attrVal = pathActions.convertPath(elem, true);
+          if(attr.localName === 'd') {
+            try {
+              attrVal = pathActions.convertPath(elem, true);
+            } catch (convertErr) {
+              // pathSeg polyfill can throw on some arcs; keep original d=
+              attrVal = elem.getAttribute('d') || attrVal;
+            }
+          }
           if(!isNaN(attrVal)) {
             attrVal = svgedit.units.shortFloat(attrVal);
           } else if(unit_re.test(attrVal)) {
@@ -5401,7 +5427,17 @@ this.rasterExport = function() {
 // The current drawing as raw SVG XML text.
 this.getSvgString = function() {
   save_options.apply = false;
-  return this.svgCanvasToString();
+  try {
+    return this.svgCanvasToString();
+  } catch (err) {
+    console.error('svgCanvasToString failed, using XMLSerializer fallback', err);
+    try {
+      return new XMLSerializer().serializeToString(svgcontent);
+    } catch (err2) {
+      console.error('XMLSerializer fallback failed', err2);
+      throw err;
+    }
+  }
 };
 
 // Function: randomizeIds
