@@ -33,25 +33,76 @@ const eyedropper = svgCanvas.addExtension.apply(this, ["eyedropper", MD.Eyedropp
 state.set("canvasId", t("Untitled"));
 state.set("canvasMode", state.get("canvasMode"));
 
-// load from param
-if (!window.location.search.includes("?load=")) {
-  svgCanvas.setSvgString(state.get("canvasContent"));
+function applyIncomingSvg(svgText) {
+  if (!svgText || typeof svgText !== "string") return false;
+  const trimmed = svgText.trim();
+  if (!trimmed.includes("<svg")) return false;
+  const ok = svgCanvas.setSvgString(trimmed);
+  if (ok) state.set("canvasContent", trimmed);
+  return !!ok;
 }
-else {
-  
+
+// load from param: ?svg=<encoded svg> or ?load=<url to fetch>
+const svgParam = utils.findGetParameter("svg");
+const loadParam = utils.findGetParameter("load");
+
+if (svgParam && svgParam.includes("<svg")) {
+  applyIncomingSvg(svgParam);
+} else if (loadParam) {
   const error = function(err) {
       console.log(err);
       svgCanvas.setSvgString(state.get("canvasContent"));
-  }
+  };
 
-  const url = utils.findGetParameter("load");
-  fetch(url)
+  fetch(loadParam)
     .then(r => r.text())
     .then(text => {
       if (text.includes("Error response")) return error("Error response");
-      svgCanvas.setSvgString(text);
+      if (!applyIncomingSvg(text)) error("Invalid SVG from load URL");
     })
     .catch(error);
+} else {
+  svgCanvas.setSvgString(state.get("canvasContent"));
+}
+
+// Accept SVG from opener pages (question-correcter, diagramparser, etc.)
+window.addEventListener("message", function(e) {
+  const data = e.data;
+  if (!data || typeof data !== "object") return;
+  if (data.type === "LOAD_SVG" && data.content) {
+    applyIncomingSvg(data.content);
+  }
+});
+
+function returnSvgToOpener() {
+  const text = svgCanvas.getSvgString();
+  if (!window.opener || window.opener.closed) {
+    navigator.clipboard.writeText(text).then(function() {
+      alert("No opener window found. SVG copied to clipboard — paste it into the CopyCat SVG textarea.");
+    }).catch(function() {
+      alert("No opener window found. Use View → Source… → Copy SVG.");
+    });
+    return;
+  }
+  try {
+    window.opener.postMessage({
+      type: "RETURN_SVG",
+      content: text,
+      source: "method-draw"
+    }, "*");
+    alert("SVG sent back to CopyCat. You can close this editor tab.");
+  } catch (err) {
+    console.error(err);
+    alert("Could not send SVG back. Use View → Source… → Copy SVG.");
+  }
+}
+
+const returnBtn = document.getElementById("return-svg-button");
+if (returnBtn) {
+  if (window.opener && !window.opener.closed) {
+    returnBtn.style.display = "inline-flex";
+  }
+  returnBtn.addEventListener("click", returnSvgToOpener);
 }
 
 state.set("canvasTitle", svgCanvas.getDocumentTitle());

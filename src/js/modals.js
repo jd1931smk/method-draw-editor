@@ -21,12 +21,57 @@ editor.modal = {
           </form>
           <div id="tool_source_back" class="toolbar_button">
             <button id="tool_source_cancel" class="cancel">Cancel</button>
+            <button id="tool_source_copy" class="ok" type="button">Copy SVG</button>
+            <button id="tool_source_return" class="ok" type="button">Send back to CopyCat</button>
             <button id="tool_source_save" class="ok">Apply Changes</button>
           </div>
         </div>
     </div>`,
     js: function(el){
       el.children[0].classList.add("modal-item-source");
+
+      function getSourceText() {
+        return el.querySelector("#svg_source_textarea").value;
+      }
+
+      async function copySourceSvg() {
+        const text = getSourceText();
+        try {
+          await navigator.clipboard.writeText(text);
+          $.alert("SVG copied to clipboard.");
+        } catch (err) {
+          const ta = el.querySelector("#svg_source_textarea");
+          ta.focus();
+          ta.select();
+          document.execCommand("copy");
+          $.alert("SVG copied to clipboard.");
+        }
+      }
+
+      function returnSourceSvg() {
+        const text = getSourceText();
+        if (!window.opener || window.opener.closed) {
+          copySourceSvg();
+          $.alert("No opener window found. SVG was copied to the clipboard instead — paste it into the SVG textarea on the CopyCat page.");
+          return;
+        }
+        try {
+          window.opener.postMessage({
+            type: "RETURN_SVG",
+            content: text,
+            source: "method-draw"
+          }, "*");
+          $.alert("SVG sent back to CopyCat. You can close this editor tab.");
+        } catch (err) {
+          console.error(err);
+          copySourceSvg();
+          $.alert("Could not message the opener. SVG was copied to the clipboard instead.");
+        }
+      }
+
+      el.querySelector("#tool_source_copy").addEventListener("click", copySourceSvg);
+      el.querySelector("#tool_source_return").addEventListener("click", returnSourceSvg);
+
       el.querySelector("#tool_source_save").addEventListener("click", function(){
         var saveChanges = function() {
           svgCanvas.clearSelection();

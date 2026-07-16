@@ -346,8 +346,16 @@ MD.Editor = function(){
 
   function source(){
     const textarea = editor.modal.source.el.querySelector("textarea");
-    textarea.value = svgCanvas.getSvgString();
-    editor.modal.source.open();
+    // Avoid textarea.select() on large Luna SVGs — that freezes/crashes Chrome.
+    const svg = svgCanvas.getSvgString();
+    requestAnimationFrame(function() {
+      textarea.value = svg;
+      editor.modal.source.open();
+      textarea.scrollTop = 0;
+      // Focus without selecting the whole document
+      try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
+      try { textarea.setSelectionRange(0, Math.min(1, svg.length)); } catch (_) { /* ignore */ }
+    });
   }
 
   function loadFromUrl(url, cb){

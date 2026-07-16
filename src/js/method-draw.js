@@ -892,9 +892,14 @@ window.methodDraw = function() {
       $('#tool_source_back').toggle(!forSaving);
       
       var str = orig_source = svgCanvas.getSvgString();
+      // Large SVGs: set value without selecting everything (select() crashes tabs).
       $('#svg_source_textarea').val(str);
       $('#svg_source_editor').fadeIn();
-      $('#svg_source_textarea').focus().select();
+      var ta = $('#svg_source_textarea')[0];
+      if (ta) {
+        ta.focus();
+        try { ta.setSelectionRange(0, Math.min(1, str.length)); } catch (_) { /* ignore */ }
+      }
     };
     
     var clickSave = function(){
