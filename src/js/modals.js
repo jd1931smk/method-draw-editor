@@ -3,6 +3,9 @@ const svgCanvas = new $.SvgCanvas(document.getElementById("svgcanvas"));
 const editor = new MD.Editor();
 const state = new State();
 
+// Above this size, dumping SVG into a <textarea> freezes Chrome (esp. after edits).
+const SVG_SOURCE_TEXTAREA_LIMIT = 80000;
+
 editor.modal = {
   about: new MD.Modal({
     html: `
@@ -21,6 +24,7 @@ editor.modal = {
           </form>
           <div id="tool_source_back" class="toolbar_button">
             <button id="tool_source_cancel" class="cancel">Cancel</button>
+            <button id="tool_source_load" class="ok" type="button">Load full source</button>
             <button id="tool_source_copy" class="ok" type="button">Copy SVG</button>
             <button id="tool_source_return" class="ok" type="button">Send back to CopyCat</button>
             <button id="tool_source_save" class="ok">Apply Changes</button>
@@ -29,22 +33,79 @@ editor.modal = {
     </div>`,
     js: function(el){
       el.children[0].classList.add("modal-item-source");
+      const ta = el.querySelector("#svg_source_textarea");
+      const loadBtn = el.querySelector("#tool_source_load");
+
+      // Authoritative SVG for Copy / Send when textarea is deferred or loading.
+      this.cachedSvg = "";
+      this.deferred = false;
+
+      function largeSourcePlaceholder(svg) {
+        const kb = Math.round((svg.length / 1024) * 10) / 10;
+        return [
+          `/* Large SVG (${kb} KB) — full XML was NOT loaded into this box.`,
+          `   Putting it in a textarea freezes Chrome on big Luna diagrams.`,
+          ``,
+          `   Use “Copy SVG” or “Send back to CopyCat” — those work from memory.`,
+          `   Only click “Load full source” if you really need to edit the raw XML. */`,
+          ``,
+          svg.slice(0, 400).replace(/\*\//g, "*∕"),
+          ``,
+          `/* … truncated preview … */`
+        ].join("\n");
+      }
+
+      this.setSourceSvg = function(svg, opts) {
+        opts = opts || {};
+        this.cachedSvg = svg || "";
+        const forceFull = !!opts.forceFull;
+        const tooBig = !forceFull && this.cachedSvg.length > SVG_SOURCE_TEXTAREA_LIMIT;
+        this.deferred = tooBig;
+        loadBtn.style.display = tooBig ? "inline-block" : "none";
+        ta.readOnly = tooBig;
+        if (tooBig) {
+          ta.value = largeSourcePlaceholder(this.cachedSvg);
+        } else {
+          ta.value = this.cachedSvg;
+        }
+        ta.scrollTop = 0;
+      }.bind(this);
 
       function getSourceText() {
-        return el.querySelector("#svg_source_textarea").value;
+        if (editor.modal.source.deferred) {
+          return editor.modal.source.cachedSvg || "";
+        }
+        return ta.value;
       }
 
       async function copySourceSvg() {
         const text = getSourceText();
+        if (!text) {
+          $.alert("No SVG to copy.");
+          return;
+        }
         try {
           await navigator.clipboard.writeText(text);
           $.alert("SVG copied to clipboard.");
+          return;
         } catch (err) {
-          const ta = el.querySelector("#svg_source_textarea");
-          ta.focus();
-          ta.select();
-          document.execCommand("copy");
-          $.alert("SVG copied to clipboard.");
+          console.warn("clipboard.writeText failed", err);
+        }
+        // Never textarea.select() on large strings — that freezes the tab.
+        // Fall back to a download instead.
+        try {
+          const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "diagram.svg";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+          $.alert("Clipboard blocked — downloaded diagram.svg instead.");
+        } catch (err2) {
+          $.alert("Could not copy SVG. Try Send back to CopyCat instead.");
         }
       }
 
@@ -52,7 +113,7 @@ editor.modal = {
         const text = getSourceText();
         if (!window.opener || window.opener.closed) {
           copySourceSvg();
-          $.alert("No opener window found. SVG was copied to the clipboard instead — paste it into the SVG textarea on the CopyCat page.");
+          $.alert("No opener window found. SVG was copied/downloaded instead — paste it into the SVG textarea on the CopyCat page.");
           return;
         }
         try {
@@ -65,9 +126,27 @@ editor.modal = {
         } catch (err) {
           console.error(err);
           copySourceSvg();
-          $.alert("Could not message the opener. SVG was copied to the clipboard instead.");
+          $.alert("Could not message the opener. SVG was copied/downloaded instead.");
         }
       }
+
+      loadBtn.addEventListener("click", function() {
+        if (!editor.modal.source.cachedSvg) return;
+        if (!confirm("Loading the full SVG into this box can freeze the browser for large diagrams. Continue?")) {
+          return;
+        }
+        loadBtn.disabled = true;
+        loadBtn.textContent = "Loading…";
+        // Yield so the UI can paint before the freeze-prone assignment.
+        setTimeout(function() {
+          try {
+            editor.modal.source.setSourceSvg(editor.modal.source.cachedSvg, { forceFull: true });
+          } finally {
+            loadBtn.disabled = false;
+            loadBtn.textContent = "Load full source";
+          }
+        }, 50);
+      });
 
       el.querySelector("#tool_source_copy").addEventListener("click", copySourceSvg);
       el.querySelector("#tool_source_return").addEventListener("click", returnSourceSvg);
@@ -75,7 +154,7 @@ editor.modal = {
       el.querySelector("#tool_source_save").addEventListener("click", function(){
         var saveChanges = function() {
           svgCanvas.clearSelection();
-          $('#svg_source_textarea').blur();
+          ta.blur();
           editor.zoom.multiply(1);
           editor.rulers.update();
           editor.paintBox.fill.prep();
@@ -83,7 +162,13 @@ editor.modal = {
           editor.modal.source.close();
         }
 
-        if (!svgCanvas.setSvgString($('#svg_source_textarea').val())) {
+        // Deferred (preview-only) mode: nothing was edited in the textarea.
+        if (editor.modal.source.deferred) {
+          editor.modal.source.close();
+          return;
+        }
+
+        if (!svgCanvas.setSvgString(getSourceText())) {
           $.confirm("There were parsing errors in your SVG source.\nRevert back to original SVG source?", function(ok) {
             if(!ok) return false;
             saveChanges();

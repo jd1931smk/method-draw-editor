@@ -75,12 +75,32 @@ window.addEventListener("message", function(e) {
 });
 
 function returnSvgToOpener() {
-  const text = svgCanvas.getSvgString();
+  let text = "";
+  try {
+    text = svgCanvas.getSvgString();
+  } catch (err) {
+    console.error(err);
+    alert("Failed to read SVG from the canvas.");
+    return;
+  }
   if (!window.opener || window.opener.closed) {
     navigator.clipboard.writeText(text).then(function() {
       alert("No opener window found. SVG copied to clipboard — paste it into the CopyCat SVG textarea.");
     }).catch(function() {
-      alert("No opener window found. Use View → Source… → Copy SVG.");
+      try {
+        const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "diagram.svg";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+        alert("No opener window found. Downloaded diagram.svg instead.");
+      } catch (_) {
+        alert("No opener window found. Use View → Source… → Copy SVG.");
+      }
     });
     return;
   }

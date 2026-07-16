@@ -38,8 +38,7 @@ MD.Modal = function(config){
   this.el = el;
 
   if (config.js) {
-    const el = this.el;
-    config.js(el);
+    config.js.call(this, this.el);
   }
 
   return this

@@ -36,13 +36,16 @@
 
 #svg_source_editor #tool_source_back {
   position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: var(--x2) var(--x2);
   display: flex;
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
 }
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: var(--x2) var(--x2);
+
+#tool_source_load {
+  display: none;
 }
