@@ -77,30 +77,20 @@ window.addEventListener("message", function(e) {
 function returnSvgToOpener() {
   let text = "";
   try {
+    // Uses XMLSerializer path — does not hang like View Source used to
     text = svgCanvas.getSvgString();
   } catch (err) {
     console.error(err);
     alert("Failed to read SVG from the canvas.");
     return;
   }
+
+  // Always copy so you can paste into CopyCat even if postMessage fails
+  const copyPromise = navigator.clipboard.writeText(text).catch(function() { return false; });
+
   if (!window.opener || window.opener.closed) {
-    navigator.clipboard.writeText(text).then(function() {
-      alert("No opener window found. SVG copied to clipboard — paste it into the CopyCat SVG textarea.");
-    }).catch(function() {
-      try {
-        const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "diagram.svg";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
-        alert("No opener window found. Downloaded diagram.svg instead.");
-      } catch (_) {
-        alert("No opener window found. Use View → Source… → Copy SVG.");
-      }
+    copyPromise.then(function() {
+      alert("SVG copied to clipboard — paste it into the CopyCat SVG textarea.");
     });
     return;
   }
@@ -110,10 +100,14 @@ function returnSvgToOpener() {
       content: text,
       source: "method-draw"
     }, "*");
-    alert("SVG sent back to CopyCat. You can close this editor tab.");
+    copyPromise.then(function() {
+      alert("SVG sent back to CopyCat (and copied to clipboard). You can close this editor tab.");
+    });
   } catch (err) {
     console.error(err);
-    alert("Could not send SVG back. Use View → Source… → Copy SVG.");
+    copyPromise.then(function() {
+      alert("Could not message the opener. SVG was copied — paste it into the CopyCat SVG textarea.");
+    });
   }
 }
 

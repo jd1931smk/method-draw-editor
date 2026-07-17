@@ -5423,22 +5423,58 @@ this.rasterExport = function() {
 // Function: getSvgString
 // Returns the current drawing as raw SVG XML text.
 //
-// Returns:
-// The current drawing as raw SVG XML text.
+// IMPORTANT: Do NOT use svgCanvasToString() here. Upstream Method Draw's
+// serialize path (defs cleanup + pathSeg convertPath) hangs forever on many
+// marker/text diagrams after simple edits — even tiny ones. CopyCat only
+// needs a faithful XML dump for paste-back, which XMLSerializer provides.
 this.getSvgString = function() {
   save_options.apply = false;
-  try {
-    return this.svgCanvasToString();
-  } catch (err) {
-    console.error('svgCanvasToString failed, using XMLSerializer fallback', err);
-    try {
-      return new XMLSerializer().serializeToString(svgcontent);
-    } catch (err2) {
-      console.error('XMLSerializer fallback failed', err2);
-      throw err;
-    }
-  }
+  return serializeSvgContentSafe();
 };
+
+function serializeSvgContentSafe() {
+  var clone;
+  try {
+    clone = svgcontent.cloneNode(true);
+  } catch (err) {
+    console.error('cloneNode failed', err);
+    return new XMLSerializer().serializeToString(svgcontent);
+  }
+
+  // Drop editor chrome if it ever lands inside the content tree
+  var kill = [
+    '#canvasGrid',
+    '#selectorParentGroup',
+    '#pathpointgrip_container',
+    '#text_cursor',
+    '#text_selectblock',
+    '#path_stretch_line',
+    '#canvashover'
+  ];
+  for (var k = 0; k < kill.length; k++) {
+    try {
+      var node = clone.querySelector(kill[k]);
+      if (node && node.parentNode) node.parentNode.removeChild(node);
+    } catch (_) { /* ignore */ }
+  }
+
+  try {
+    clone.querySelectorAll('[display="none"]').forEach(function(el) {
+      // Keep intentionally hidden diagram parts; only strip grip/grid leftovers
+      var id = el.id || '';
+      if (id.indexOf('grip') !== -1 || id.indexOf('selector') !== -1 || id === 'canvasGrid') {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      }
+    });
+  } catch (_) { /* ignore */ }
+
+  var str = new XMLSerializer().serializeToString(clone);
+  // Prefer a clean root tag name for paste-back
+  if (str.indexOf('<svg') === -1 && clone.nodeName && clone.nodeName.toLowerCase() === 'svg') {
+    str = new XMLSerializer().serializeToString(clone);
+  }
+  return str;
+}
 
 // Function: randomizeIds
 // This function determines whether to use a nonce in the prefix, when

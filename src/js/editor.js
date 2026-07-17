@@ -346,37 +346,36 @@ MD.Editor = function(){
 
   function source(){
     const textarea = editor.modal.source.el.querySelector("textarea");
-    // Open first with a lightweight placeholder so the UI doesn't look frozen
-    // while we serialize. Never select() or dump multi‑100KB strings into the
-    // textarea — that hard-freezes Chrome after editing Luna SVGs.
-    textarea.readOnly = true;
-    textarea.value = "/* Serializing SVG… */";
+    // Fast XML dump only — never Method Draw's hanging svgCanvasToString path.
+    // Prefer Copy / Send back; textarea is optional for small SVGs.
+    let svg = "";
+    try {
+      svg = svgCanvas.getSvgString() || "";
+    } catch (err) {
+      console.error(err);
+      svg = "";
+    }
+
     editor.modal.source.open();
 
-    setTimeout(function() {
-      let svg = "";
-      try {
-        svg = svgCanvas.getSvgString() || "";
-      } catch (err) {
-        console.error(err);
-        textarea.value = "/* Failed to serialize SVG — see console. */";
-        return;
-      }
+    if (typeof editor.modal.source.setSourceSvg === "function") {
+      editor.modal.source.setSourceSvg(svg);
+    } else {
+      textarea.value = svg || "/* Could not read SVG */";
+      textarea.readOnly = false;
+    }
 
-      if (typeof editor.modal.source.setSourceSvg === "function") {
-        editor.modal.source.setSourceSvg(svg);
-      } else {
-        // Fallback if modal helpers failed to init
-        textarea.value = svg;
-        textarea.readOnly = false;
-      }
+    // Auto-copy so paste into CopyCat always works even if the modal acts up
+    if (svg) {
+      navigator.clipboard.writeText(svg).then(function() {
+        // non-blocking
+      }).catch(function() { /* ignore */ });
+    }
 
-      try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-      // Never select the whole document; at most a 1-char caret for small SVGs.
-      if (!editor.modal.source.deferred) {
-        try { textarea.setSelectionRange(0, Math.min(1, svg.length)); } catch (_) { /* ignore */ }
-      }
-    }, 0);
+    try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
+    if (!editor.modal.source.deferred && svg) {
+      try { textarea.setSelectionRange(0, Math.min(1, svg.length)); } catch (_) { /* ignore */ }
+    }
   }
 
   function loadFromUrl(url, cb){
